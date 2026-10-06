@@ -150,7 +150,13 @@ def build_screening_agent() -> Agent:
     #
     # Hint: Use temperature=0.0 for deterministic classification
     # ───────────────────────────────────────────────────────
-    pass  # Replace with your implementation
+    model = BedrockModel(model_id=NOVA_LITE_MODEL, region_name=AWS_REGION, temperature=0.0)
+    system_prompt = (
+        "You are a high-speed Screening Agent. Your task is to process incoming posts. "
+        "You must call the screen_post tool with the given post_id. "
+        "Report only the Classification (SAFE, HARMFUL, or BORDERLINE) and the Confidence score."
+    )
+    return Agent(model=model, system_prompt=system_prompt, tools=[screen_post])
 
 
 # ═══════════════════════════════════════════════════════
@@ -203,7 +209,13 @@ def build_review_agent() -> Agent:
     #
     # Hint: Use temperature=0.1 for analytical consistency
     # ───────────────────────────────────────────────────────
-    pass  # Replace with your implementation
+    model = BedrockModel(model_id=CLAUDE_MODEL, region_name=AWS_REGION, temperature=0.1)
+    system_prompt = (
+        "You are a nuanced Deep Review Agent. Your task is to analyze borderline cases. "
+        "You must call the deep_review_post tool with the given post_id. "
+        "Report the final Verdict (SAFE or HARMFUL) and provide a one-sentence Reason for your decision."
+    )
+    return Agent(model=model, system_prompt=system_prompt, tools=[deep_review_post])
 
 
 # ═══════════════════════════════════════════════════════
@@ -251,7 +263,13 @@ def build_notice_agent() -> Agent:
     #
     # Hint: Use temperature=0.3 for slightly creative communication
     # ───────────────────────────────────────────────────────
-    pass  # Replace with your implementation
+    model = BedrockModel(model_id=NOVA_PRO_MODEL, region_name=AWS_REGION, temperature=0.3)
+    system_prompt = (
+        "You are a Notice Agent for a social media platform. Your task is to communicate moderation actions. "
+        "You must call the generate_notice tool using the provided post_id and violation_type. "
+        "Report the Action (REMOVED or FLAGGED), the drafted Notice text, and the Reason."
+    )
+    return Agent(model=model, system_prompt=system_prompt, tools=[generate_notice])
 
 
 # ═══════════════════════════════════════════════════════

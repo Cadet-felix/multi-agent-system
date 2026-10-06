@@ -212,7 +212,7 @@ def build_regulatory_agent() -> Agent:
     # TODO 1: Create BedrockModel with Nova Lite (same as demo STEP 1)
     # - Use NOVA_LITE_MODEL for fast regulatory checklist verification
     # - Set temperature=0.0 for deterministic compliance assessment
-    # model = BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_LITE_MODEL, region_name=AWS_REGION, temperature=0.0)
 
     # TODO 2: Write system prompt (same as demo STEP 2)
     # - Tell the agent to call check_regulatory with the contract_id
@@ -220,7 +220,12 @@ def build_regulatory_agent() -> Agent:
     #   Risk Level: <HIGH|MEDIUM|LOW>
     #   Violations: <count or NONE>
     #   Recommendation: <one-sentence>
-    # system_prompt = """..."""
+    system_prompt = """You are a Regulatory Compliance Agent. 
+    You must call the check_regulatory tool using the provided contract_id.
+    Constrain your output to exactly three lines:
+    Risk Level: <HIGH|MEDIUM|LOW>
+    Violations: <count or NONE>
+    Recommendation: <one-sentence>"""
 
     # ── Tool is pre-written for you ──
     @tool
@@ -255,8 +260,7 @@ def build_regulatory_agent() -> Agent:
         return json.dumps(result, indent=2)
 
     # TODO 3: Build Agent — bind model + prompt + tools (same as demo STEP 3)
-    # return Agent(model=model, system_prompt=system_prompt, tools=[check_regulatory])
-    pass  # Remove this line when you complete the TODOs
+    return Agent(model=model, system_prompt=system_prompt, tools=[check_regulatory])
 
 
 # ═══════════════════════════════════════════════════════
@@ -275,7 +279,7 @@ def build_financial_agent() -> Agent:
     # TODO 4: Create BedrockModel with Claude (same as demo STEP 1)
     # - Use CLAUDE_MODEL for deep analysis of complex financial terms
     # - Set temperature=0.1 for analytical precision
-    # model = BedrockModel(...)
+    model = BedrockModel(model_id=CLAUDE_MODEL, region_name=AWS_REGION, temperature=0.1)
 
     # TODO 5: Write system prompt (same as demo STEP 2)
     # - Tell the agent to call assess_financial_risk with the contract_id
@@ -283,7 +287,12 @@ def build_financial_agent() -> Agent:
     #   Risk Level: <HIGH|MEDIUM|LOW>
     #   Unfavorable Terms: <count or NONE>
     #   Recommendation: <one-sentence>
-    # system_prompt = """..."""
+    system_prompt = """You are a Financial Risk Agent. 
+    You must call the assess_financial_risk tool using the provided contract_id.
+    Constrain your output to exactly three lines:
+    Risk Level: <HIGH|MEDIUM|LOW>
+    Unfavorable Terms: <count or NONE>
+    Recommendation: <one-sentence>"""
 
     # ── Tool is pre-written for you ──
     @tool
@@ -318,8 +327,7 @@ def build_financial_agent() -> Agent:
         return json.dumps(result, indent=2)
 
     # TODO 6: Build Agent — bind model + prompt + tools (same as demo STEP 3)
-    # return Agent(model=model, system_prompt=system_prompt, tools=[assess_financial_risk])
-    pass  # Remove this line when you complete the TODOs
+    return Agent(model=model, system_prompt=system_prompt, tools=[assess_financial_risk])
 
 
 # ═══════════════════════════════════════════════════════
@@ -338,7 +346,7 @@ def build_ip_agent() -> Agent:
     # TODO 7: Create BedrockModel with Nova Pro (same as demo STEP 1)
     # - Use NOVA_PRO_MODEL for balanced IP clause analysis
     # - Set temperature=0.1 for consistent assessment
-    # model = BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_PRO_MODEL, region_name=AWS_REGION, temperature=0.1)
 
     # TODO 8: Write system prompt (same as demo STEP 2)
     # - Tell the agent to call review_ip_clauses with the contract_id
@@ -346,7 +354,12 @@ def build_ip_agent() -> Agent:
     #   Risk Level: <HIGH|MEDIUM|LOW>
     #   IP Concerns: <count or NONE>
     #   Recommendation: <one-sentence>
-    # system_prompt = """..."""
+    system_prompt = """You are an IP Protection Agent. 
+    You must call the review_ip_clauses tool using the provided contract_id.
+    Constrain your output to exactly three lines:
+    Risk Level: <HIGH|MEDIUM|LOW>
+    IP Concerns: <count or NONE>
+    Recommendation: <one-sentence>"""
 
     # ── Tool is pre-written for you ──
     @tool
@@ -380,8 +393,7 @@ def build_ip_agent() -> Agent:
         return json.dumps(result, indent=2)
 
     # TODO 9: Build Agent — bind model + prompt + tools (same as demo STEP 3)
-    # return Agent(model=model, system_prompt=system_prompt, tools=[review_ip_clauses])
-    pass  # Remove this line when you complete the TODOs
+    return Agent(model=model, system_prompt=system_prompt, tools=[review_ip_clauses])
 
 
 # ═══════════════════════════════════════════════════════
@@ -404,7 +416,7 @@ def build_synthesizer_agent() -> Agent:
     # TODO 10: Create BedrockModel with Claude (same as demo STEP 1)
     # - Use CLAUDE_MODEL for reasoning across multiple specialist outputs
     # - Set temperature=0.2 for balanced synthesis
-    # model = BedrockModel(...)
+    model = BedrockModel(model_id=CLAUDE_MODEL, region_name=AWS_REGION, temperature=0.2)
 
     # TODO 11: Write system prompt (same as demo STEP 2)
     # - Tell the agent to call synthesize_compliance with the contract_id
@@ -415,7 +427,15 @@ def build_synthesizer_agent() -> Agent:
     #   Financial: <one-line summary>
     #   IP Protection: <one-line summary>
     # - Tell agent to use ONLY specialist findings, NOT re-analyze the contract
-    # system_prompt = """..."""
+    system_prompt = """You are a Synthesizer Agent. 
+    You must call the synthesize_compliance tool with the provided contract_id. 
+    You must use ONLY the specialist findings provided by the tool. Do NOT attempt to re-analyze the contract yourself.
+    Constrain your output to exactly five lines:
+    Overall Risk: <HIGH|MEDIUM|LOW>
+    Recommendation: <APPROVE|APPROVE-WITH-CONDITIONS|REJECT>
+    Regulatory: <one-line summary>
+    Financial: <one-line summary>
+    IP Protection: <one-line summary>"""
 
     # ── Tool is pre-written for you ──
     @tool
@@ -476,8 +496,7 @@ def build_synthesizer_agent() -> Agent:
         return json.dumps(result, indent=2)
 
     # TODO 12: Build Agent — bind model + prompt + tools (same as demo STEP 3)
-    # return Agent(model=model, system_prompt=system_prompt, tools=[synthesize_compliance])
-    pass  # Remove this line when you complete the TODOs
+    return Agent(model=model, system_prompt=system_prompt, tools=[synthesize_compliance])
 
 
 # ═══════════════════════════════════════════════════════
