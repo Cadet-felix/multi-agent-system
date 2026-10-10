@@ -6,29 +6,29 @@ Module 8 Exercise: Build a Multi-Agent RAG System for Clinical Literature Review
 Architecture:
     Doctor asks clinical question
          │
-    ┌────┴─────────────────────────────────────────────────┐
-    │  Parallel Retrieval (ThreadPoolExecutor)               │
-    │  Two specialized retrievers query clinical KBs         │
-    └────┬──────────────────┬──────────────────────────────┘
-         │                  │
+    ┌────┴────────────────────────────────────────────────┐
+    │  Parallel Retrieval (ThreadPoolExecutor)            │
+    │  Two specialized retrievers query clinical KBs      │
+    └────┬─────────────────┬──────────────────────────────┘
+         │                 │
     ┌────┴──────────┐  ┌───┴───────────────┐
-    │ DrugInteraction│  │ClinicalGuidelines │
-    │ Retriever      │  │Retriever          │
+    │DrugInteraction│  │ClinicalGuidelines │ 
+    │Retriever      │  │Retriever          │
     └────┬──────────┘  └───┬───────────────┘
-         │                  │
-    ┌────┴──────────────────┴──────────────────────────────┐
-    │  Result Aggregation + Deduplication                    │
-    │  - Combine passages from both KBs                      │
-    │  - Deduplicate near-identical passages (NEW)           │
-    │  - Rank by relevance score, select top-10              │
-    └────┬─────────────────────────────────────────────────┘
+         │                 │
+    ┌────┴─────────────────┴──────────────────────────────┐
+    │  Result Aggregation + Deduplication                 │
+    │  - Combine passages from both KBs                   │
+    │  - Deduplicate near-identical passages (NEW)        │
+    │  - Rank by relevance score, select top-10           │
+    └────┬────────────────────────────────────────────────┘
          │
     ┌────┴─────────────────────────────────────────────────┐
-    │  SynthesisAgent (structured clinical output)           │
-    │  - Drug Interactions section + Guidelines section       │
-    │  - Integrated Recommendation                           │
-    │  - Mandatory citations + confidence disclaimer          │
-    │  - Handles partial results with degradation notice      │
+    │  SynthesisAgent (structured clinical output)         │
+    │  - Drug Interactions section + Guidelines section    │
+    │  - Integrated Recommendation                         │
+    │  - Mandatory citations + confidence disclaimer       │
+    │  - Handles partial results with degradation notice   │
     └──────────────────────────────────────────────────────┘
 
 Same RAG pattern as the demo (research_assistant_rag.py),
@@ -101,8 +101,8 @@ NOVA_PRO_MODEL = os.environ.get("NOVA_PRO_MODEL", "us.amazon.nova-pro-v1:0")
 TOP_K = 10  # More passages for clinical context
 
 # Bedrock Knowledge Base IDs (created manually in AWS Console)
-DRUG_INTERACTIONS_KB_ID = os.environ.get("DRUG_INTERACTIONS_KB_ID", "")
-CLINICAL_GUIDELINES_KB_ID = os.environ.get("CLINICAL_GUIDELINES_KB_ID", "")
+DRUG_INTERACTIONS_KB_ID = "M0MNSPSCQM"
+CLINICAL_GUIDELINES_KB_ID = "PQ1YQW9N2I"
 
 # Bedrock Agent Runtime client for KB retrieval
 bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
@@ -318,11 +318,15 @@ def build_drug_interaction_retriever(query: str,
 
     # TODO 1: Create a BedrockModel for the retriever
     # Hint: Same as demo — use NOVA_LITE_MODEL, temperature=0.0
-    model = None  # Replace with BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_LITE_MODEL, region_name=AWS_REGION, temperature=0.0)
 
     # TODO 2: Write a system prompt for this retriever
     # Hint: Tell the agent to call retrieve_drug_interactions and report results
-    system_prompt = ""  # Replace with retriever instructions
+    system_prompt = (
+        "You are a specialized clinical retriever for Drug Interactions. "
+        "Search the Drug Interactions Knowledge Base by calling the retrieve_drug_interactions tool "
+        "with the given query. Report the summary of passages found."
+    )
 
     @tool
     def retrieve_drug_interactions(search_query: str) -> str:
@@ -359,7 +363,7 @@ def build_drug_interaction_retriever(query: str,
 
     # TODO 3: Return an Agent with the model, system_prompt, and tools
     # Hint: Agent(model=model, system_prompt=system_prompt, tools=[retrieve_drug_interactions])
-    pass  # Replace with return Agent(...)
+    return Agent(model=model, system_prompt=system_prompt, tools=[retrieve_drug_interactions])
 
 
 def build_guidelines_retriever(query: str,
@@ -368,11 +372,15 @@ def build_guidelines_retriever(query: str,
 
     # TODO 4: Create a BedrockModel for the retriever
     # Hint: Same as TODO 1 — use NOVA_LITE_MODEL, temperature=0.0
-    model = None  # Replace with BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_LITE_MODEL, region_name=AWS_REGION, temperature=0.0)
 
     # TODO 5: Write a system prompt for this retriever
     # Hint: Tell the agent to call retrieve_guidelines and report results
-    system_prompt = ""  # Replace with retriever instructions
+    system_prompt = (
+        "You are a specialized clinical retriever for Clinical Guidelines. "
+        "Search the Clinical Guidelines Knowledge Base by calling the retrieve_guidelines tool "
+        "with the given query. Report the summary of passages found."
+    )
 
     @tool
     def retrieve_guidelines(search_query: str) -> str:
@@ -409,7 +417,7 @@ def build_guidelines_retriever(query: str,
 
     # TODO 6: Return an Agent with the model, system_prompt, and tools
     # Hint: Agent(model=model, system_prompt=system_prompt, tools=[retrieve_guidelines])
-    pass  # Replace with return Agent(...)
+    return Agent(model=model, system_prompt=system_prompt, tools=[retrieve_guidelines])
 
 
 # RESULT AGGREGATION + DEDUPLICATION
@@ -424,8 +432,14 @@ def deduplicate_passages(passages: list[dict], similarity_threshold: float = 0.8
 
     Production: Use embedding cosine similarity between passage vectors.
     """
-    # Replace with deduplication logic
-    return passages  # Currently returns all — implement filtering
+    seen_ids = set()
+    unique = []
+    for p in passages:
+        doc_id = p.get("doc_id")
+        if doc_id not in seen_ids:
+            seen_ids.add(doc_id)
+            unique.append(p)
+    return unique
 
 
 def aggregate_results(drug_passages: list, guideline_passages: list,
@@ -441,8 +455,10 @@ def aggregate_results(drug_passages: list, guideline_passages: list,
 
     Hint: Same as demo's aggregate_results, plus the deduplication call
     """
-    # Replace with aggregation logic
-    return []
+    combined = list(drug_passages) + list(guideline_passages)
+    unique = deduplicate_passages(combined)
+    ranked = sorted(unique, key=lambda p: p.get("score", 0.0), reverse=True)
+    return ranked[:top_k]
 
 
 # SYNTHESIS AGENT — Structured clinical output
@@ -452,15 +468,24 @@ def build_synthesis_agent(passages: list[dict], query: str,
 
     # TODO 9: Create a BedrockModel for synthesis
     # Hint: Use NOVA_PRO_MODEL, temperature=0.1
-    model = None  # Replace with BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_PRO_MODEL, region_name=AWS_REGION, temperature=0.1)
 
     # TODO 10: Format the passages into a string for the system prompt
     # Hint: Same as demo — format each passage with doc_id, title, score, kb, source, content
-    formatted = ""  # Replace with passage formatting
+    formatted = "\n\n".join(
+        f"[{p['doc_id']}] Title: {p['title']} (Score: {p.get('score', 0):.2f})\n"
+        f"KB: {p['kb']} | Source: {p['source']}\n"
+        f"Content: {p['content']}"
+        for p in passages
+    )
 
     # TODO 11: Build the partial_notice string for degradation scenarios
     # Hint: If partial=True, include a warning about incomplete data
-    partial_notice = ""  # Replace with conditional warning
+    partial_notice = (
+        "\n\nWARNING / DEGRADATION NOTICE:\n"
+        "One of the clinical knowledge bases was unavailable during retrieval. "
+        "This summary is based on incomplete data. Exercise caution and verify against primary sources."
+    ) if partial else ""
 
     # TODO 12: Write the system prompt for structured clinical synthesis
     # Hint: Instruct the agent to produce:
@@ -470,11 +495,25 @@ def build_synthesis_agent(passages: list[dict], query: str,
     #   - Citations using [DOC_ID] format
     #   - Include partial_notice if applicable
     #   - Include the formatted passages
-    system_prompt = ""  # Replace with synthesis instructions
+    system_prompt = f"""You are an expert Clinical Literature Synthesis Agent assisting physicians.
+Synthesize the provided clinical evidence into a clear, structured summary answering the clinical query.
+
+Structure your response into exactly three sections:
+1. DRUG INTERACTIONS: Detail pharmacokinetic/pharmacodynamic interactions, mechanisms, and risks.
+2. CLINICAL GUIDELINES: Detail relevant recommendations, standards of care, dosing, or monitoring protocols.
+3. INTEGRATED RECOMMENDATION: Synthesize actionable clinical guidance integrating interactions and guidelines.
+
+Requirements:
+- Every factual claim MUST cite its source document using [DOC_ID] format (e.g., [DI-001] or [CG-001]).
+- If a section lacks evidence due to missing data, explicitly state this limitation.
+- Be precise, professional, and clinically accurate.{partial_notice}
+
+Available Clinical Passages:
+{formatted}"""
 
     # TODO 13: Return an Agent with the model, system_prompt, and empty tools list
     # Hint: Agent(model=model, system_prompt=system_prompt, tools=[])
-    pass  # Replace with return Agent(...)
+    return Agent(model=model, system_prompt=system_prompt, tools=[])
 
 
 # RAG ORCHESTRATOR
@@ -495,6 +534,22 @@ def run_clinical_rag(query_data: dict):
     print(f"\n  Dispatching 2 retrievers in parallel...")
     t_start = time.time()
 
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                run_agent_with_retry,
+                lambda: build_drug_interaction_retriever(query, simulate_failure=(fail_at == "drug_interactions")),
+                f"Retrieve drug interactions for: {query}"
+            ),
+            executor.submit(
+                run_agent_with_retry,
+                lambda: build_guidelines_retriever(query, simulate_failure=(fail_at == "guidelines")),
+                f"Retrieve clinical guidelines for: {query}"
+            )
+        ]
+        for future in as_completed(futures):
+            future.result()
+
     t_retrieval = time.time() - t_start
     drug_count = len(retrieval_results["drug"])
     guide_count = len(retrieval_results["guidelines"])
@@ -502,9 +557,10 @@ def run_clinical_rag(query_data: dict):
     print(f"    Clinical Guidelines: {guide_count} passage(s)")
     if fail_at:
         print(f"    ⚠ {fail_at} KB unavailable — partial results")
+
     # TODO 15: Call aggregate_results to combine and rank passages
     print(f"  Aggregating + deduplicating (top-{TOP_K})...")
-    top_passages = []  # Replace with aggregate_results call
+    top_passages = aggregate_results(retrieval_results["drug"], retrieval_results["guidelines"], top_k=TOP_K)
 
     if not top_passages:
         print(f"    No relevant passages found — skipping synthesis")
@@ -519,10 +575,14 @@ def run_clinical_rag(query_data: dict):
     for p in top_passages:
         print(f"      [{p['doc_id']}] {p['title'][:50]}... (score: {p['score']})")
     avg_score = round(sum(p["score"] for p in top_passages) / len(top_passages), 3)
+
     # TODO 16: Run the synthesis agent with run_agent_with_retry
     partial = (fail_at is not None)
     print(f"  SynthesisAgent{' (PARTIAL)' if partial else ''}...")
-    t_synth = 0  # Replace with run_agent_with_retry call
+    t_synth = run_agent_with_retry(
+        lambda: build_synthesis_agent(top_passages, query, partial=partial),
+        f"Synthesize clinical literature for query: {query}"
+    )
 
     return {
         "query": query,
