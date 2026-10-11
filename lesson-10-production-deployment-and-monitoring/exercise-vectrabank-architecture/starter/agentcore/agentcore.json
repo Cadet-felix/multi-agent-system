@@ -14,7 +14,47 @@
       "protocol": "HTTP",
       "instrumentation": {
         "enableOtel": false
-      }
+      },
+      "description": "Lesson 10 deployment smoke test",
+      "executionRoleArn": "arn:aws:iam::084248244477:role/lesson-10-exercise-agentcore-role",
+      "envVars": [
+        {
+          "name": "MARKET_DATA_KB_ID",
+          "value": "kb-market-data-001"
+        },
+        {
+          "name": "COMPLIANCE_KB_ID",
+          "value": "kb-compliance-002"
+        },
+        {
+          "name": "RISK_KB_ID",
+          "value": "kb-risk-003"
+        },
+        {
+          "name": "STATE_TABLE",
+          "value": "vectrabank-agent-state"
+        },
+        {
+          "name": "AUDIT_TABLE",
+          "value": "vectrabank-compliance-audit"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "value": "INFO"
+        },
+        {
+          "name": "GUARDRAIL_ID",
+          "value": "arn:aws:bedrock:us-east-1:084248244477:guardrail/ni0w154mrwj4"
+        },
+        {
+          "name": "GUARDRAIL_VERSION",
+          "value": "DRAFT"
+        }
+      ]
     }
   ]
 }
