@@ -163,7 +163,26 @@ customer_memory = {}
 #   - Return the record
 #   Hint: Same as demo's create_trip(), but with order fields
 def create_order(order_data: dict) -> dict:
-    pass
+    order_id = order_data["order_id"]
+    record = {
+        "order_id": order_id,
+        "customer_id": order_data["customer_id"],
+        "customer_name": order_data["customer_name"],
+        "restaurant": order_data["restaurant"],
+        "items": order_data["items"],
+        "address": order_data["address"],
+        "payment_method": order_data["payment_method"],
+        "driver": None,
+        "total_price": None,
+        "status": "pending",
+        "progress": [],
+        "version": 0,
+        "ttl": int(time.time()) + 7200,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    order_table.put_item(Item=to_dynamo(record))
+    _write_log.append({"op": "put_item", "pk": order_id, "version": 0, "timestamp": time.time()})
+    return record
 
 
 # TODO 2: Implement update_order(order_id, updates, max_retries=3)
@@ -176,7 +195,35 @@ def create_order(order_data: dict) -> dict:
 #   - Return the updated record (converted with from_dynamo)
 #   Hint: Same as demo's update_trip() — the KEY pattern
 def update_order(order_id: str, updates: dict, max_retries: int = 3) -> dict:
-    pass
+    for attempt in range(max_retries):
+        response = order_table.get_item(Key={"order_id": order_id})
+        current = from_dynamo(response.get("Item"))
+        
+        if not current:
+            raise ValueError(f"Order {order_id} not found in DynamoDB.")
+            
+        expected_ver = current["version"]
+        new_ver = expected_ver + 1
+        
+        updated_item = {**current, **updates, "version": new_ver}
+        
+        try:
+            order_table.put_item(
+                Item=to_dynamo(updated_item),
+                ConditionExpression="version = :expected_ver",
+                ExpressionAttributeValues={":expected_ver": expected_ver}
+            )
+            _write_log.append({"op": "update_item", "pk": order_id, "version": new_ver, "timestamp": time.time()})
+            return updated_item
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                _write_log.append({"op": "CONFLICT", "pk": order_id, "expected_ver": expected_ver, "timestamp": time.time()})
+                time.sleep(0.1 * (2 ** attempt))
+            else:
+                raise
+                
+    raise VersionConflictError(f"Failed to update {order_id} after {max_retries} retries due to concurrent modifications.")
 
 
 # TODO 3: Implement get_order(order_id)
@@ -184,7 +231,9 @@ def update_order(order_id: str, updates: dict, max_retries: int = 3) -> dict:
 #   - Return from_dynamo(item) if item else None
 #   Hint: Same as demo's get_trip()
 def get_order(order_id: str) -> dict | None:
-    pass
+    response = order_table.get_item(Key={"order_id": order_id})
+    item = response.get("Item")
+    return from_dynamo(item) if item else None
 
 
 # TODO 4: Implement recover_order(order_id) — NEW pattern, not in demo
@@ -194,17 +243,33 @@ def get_order(order_id: str) -> dict | None:
 #   - Return the cleaned-up record
 #   Hint: Handles case where some agents wrote partial data before restaurant rejected
 def recover_order(order_id: str) -> dict:
-    pass
+    print(f"    [RECOVERY RUNNING] Reverting partial agent writes for order {order_id}...")
+    current = get_order(order_id)
+    progress = current.get("progress", [])
+    progress.extend(["Order rejected by restaurant", "Partial updates cleaned up"])
+    
+    updates = {
+        "driver": None,
+        "total_price": None,
+        "status": "cancelled",
+        "progress": progress
+    }
+    
+    recovered_record = update_order(order_id, updates)
+    print(f"    [RECOVERY COMPLETE] Order cancelled and cleaned up.")
+    return recovered_record
 
 
 # TODO 5-7: Build RestaurantConfirmAgent
 def build_restaurant_confirm_agent(simulate_rejection: bool = False) -> Agent:
     """Worker: Restaurant confirms or rejects the order."""
     # TODO 5: Create BedrockModel with NOVA_LITE_MODEL, temperature=0.0
-    model = None  # Replace with BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_LITE_MODEL, region_name=AWS_REGION, temperature=0.0)
 
     # TODO 6: Write system prompt — agent calls confirm_order, reports "<order_id> confirmed/rejected"
-    system_prompt = ""  # Replace with system prompt
+    system_prompt = """You are a Restaurant Confirmation Agent.
+    Your task is to call the confirm_order tool for the given order ID.
+    Report the exact phrase: '<order_id> confirmed' or '<order_id> rejected' based on the tool's result. Do not add conversational text."""
 
     @tool
     def confirm_order(order_id: str) -> str:
@@ -219,17 +284,19 @@ def build_restaurant_confirm_agent(simulate_rejection: bool = False) -> Agent:
         return json.dumps(result, indent=2)
 
     # TODO 7: Build and return Agent with model, system_prompt, tools=[confirm_order]
-    return None  # Replace with Agent(...)
+    return Agent(model=model, system_prompt=system_prompt, tools=[confirm_order])
 
 
 # TODO 8-10: Build DriverAssignAgent
 def build_driver_assign_agent() -> Agent:
     """Worker: Assigns a delivery driver."""
     # TODO 8: Create BedrockModel with NOVA_LITE_MODEL, temperature=0.0
-    model = None  # Replace with BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_LITE_MODEL, region_name=AWS_REGION, temperature=0.0)
 
     # TODO 9: Write system prompt — agent calls assign_driver, reports "Driver <name> assigned"
-    system_prompt = ""  # Replace with system prompt
+    system_prompt = """You are a Driver Assignment Agent. 
+    Your task is to call the assign_driver tool for the given order ID.
+    Report exactly: 'Driver <name> assigned' using the name returned by the tool. Do not add extra text."""
 
     @tool
     def assign_driver(order_id: str) -> str:
@@ -257,17 +324,19 @@ def build_driver_assign_agent() -> Agent:
         return json.dumps({**driver_info, "order_id": order_id}, indent=2)
 
     # TODO 10: Build and return Agent with model, system_prompt, tools=[assign_driver]
-    return None  # Replace with Agent(...)
+    return Agent(model=model, system_prompt=system_prompt, tools=[assign_driver])
 
 
 # TODO 11-13: Build PriceCalculatorAgent
 def build_price_calculator_agent() -> Agent:
     """Worker: Calculates total price with delivery fee and tax."""
     # TODO 11: Create BedrockModel with NOVA_LITE_MODEL, temperature=0.0
-    model = None  # Replace with BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_LITE_MODEL, region_name=AWS_REGION, temperature=0.0)
 
     # TODO 12: Write system prompt — agent calls calculate_price, reports "Total for <order_id>: $<amount>"
-    system_prompt = ""  # Replace with system prompt
+    system_prompt = """You are a Price Calculator Agent.
+    Your task is to call the calculate_price tool for the given order ID.
+    Report exactly: 'Total for <order_id>: $<amount>' using the total amount returned. Do not add extra text."""
 
     @tool
     def calculate_price(order_id: str) -> str:
@@ -283,17 +352,19 @@ def build_price_calculator_agent() -> Agent:
         return json.dumps({**price_info, "order_id": order_id}, indent=2)
 
     # TODO 13: Build and return Agent with model, system_prompt, tools=[calculate_price]
-    return None  # Replace with Agent(...)
+    return Agent(model=model, system_prompt=system_prompt, tools=[calculate_price])
 
 
 # TODO 14-16: Build StatusTrackerAgent
 def build_status_tracker_agent() -> Agent:
     """Worker: Updates order progress/status."""
     # TODO 14: Create BedrockModel with NOVA_LITE_MODEL, temperature=0.0
-    model = None  # Replace with BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_LITE_MODEL, region_name=AWS_REGION, temperature=0.0)
 
     # TODO 15: Write system prompt — agent calls update_status, reports "Status for <order_id>: <status>"
-    system_prompt = ""  # Replace with system prompt
+    system_prompt = """You are a Status Tracker Agent.
+    Your task is to call the update_status tool for the given order ID.
+    Report exactly: 'Status for <order_id>: <status>' using the status returned by the tool. Do not add extra text."""
 
     @tool
     def update_status(order_id: str) -> str:
@@ -308,7 +379,7 @@ def build_status_tracker_agent() -> Agent:
         return json.dumps({"order_id": order_id, "status": new_status, "progress_count": len(progress)}, indent=2)
 
     # TODO 16: Build and return Agent with model, system_prompt, tools=[update_status]
-    return None  # Replace with Agent(...)
+    return Agent(model=model, system_prompt=system_prompt, tools=[update_status])
 
 
 # TODO 17-18: Wire up scenarios in main()
@@ -332,7 +403,19 @@ def main():
     print(f"  Items: {items_str} | Customer: {order1['customer_name']}")
     print(f"{'━' * 70}")
 
-    pass  # Replace with sequential scenario implementation
+    record1 = create_order(order1)
+    print(f"  Created: {order1['order_id']} (version {record1['version']}, TTL: {record1['ttl']})")
+
+    run_agent_with_retry(build_restaurant_confirm_agent, f"Confirm order {order1['order_id']}")
+    run_agent_with_retry(build_driver_assign_agent, f"Assign driver for order {order1['order_id']}")
+    run_agent_with_retry(build_price_calculator_agent, f"Calculate price for order {order1['order_id']}")
+    run_agent_with_retry(build_status_tracker_agent, f"Update status for order {order1['order_id']}")
+
+    state1 = get_order(order1['order_id'])
+    
+    print(f"\n  Final State: {state1['order_id']} v{state1['version']}")
+    print(f"    Status: {state1['status']} | Driver: {state1.get('driver', {}).get('name')} | Price: ${state1.get('total_price', {}).get('total', 0):.2f}")
+    print(f"    Progress: {state1['progress']}")
 
     # TODO 18: Concurrent scenario (Scenario 2)
     #   a) Create order2, print version
@@ -348,7 +431,40 @@ def main():
     print(f"  All 4 agents run in PARALLEL — expect version conflicts!")
     print(f"{'━' * 70}")
 
-    pass  # Replace with concurrent scenario implementation
+    record2 = create_order(order2)
+    print(f"  Created: {order2['order_id']} (version {record2['version']})")
+
+    conflicts_before = sum(1 for e in _write_log if e["op"] == "CONFLICT")
+
+    def run_restaurant():
+        return run_agent_with_retry(build_restaurant_confirm_agent, f"Confirm order {order2['order_id']}")
+    def run_driver():
+        return run_agent_with_retry(build_driver_assign_agent, f"Assign driver for order {order2['order_id']}")
+    def run_price():
+        return run_agent_with_retry(build_price_calculator_agent, f"Calculate price for order {order2['order_id']}")
+    def run_status():
+        return run_agent_with_retry(build_status_tracker_agent, f"Update status for order {order2['order_id']}")
+
+    t_start = time.time()
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [
+            executor.submit(run_restaurant),
+            executor.submit(run_driver),
+            executor.submit(run_price),
+            executor.submit(run_status)
+        ]
+        for future in as_completed(futures):
+            future.result()  # Wait for all to finish
+    t_parallel = time.time() - t_start
+
+    conflicts_after = sum(1 for e in _write_log if e["op"] == "CONFLICT")
+    new_conflicts = conflicts_after - conflicts_before
+
+    state2 = get_order(order2['order_id'])
+    
+    print(f"\n  Final State: {state2['order_id']} v{state2['version']} ({t_parallel:.1f}s)")
+    print(f"    Status: {state2['status']} | Driver: {state2.get('driver', {}).get('name')} | Price: ${state2.get('total_price', {}).get('total', 0):.2f}")
+    print(f"    Conflicts caught & resolved: {new_conflicts}")
 
     # SCENARIO 3: State Recovery (restaurant rejection) — provided for you
     order3 = ORDERS[2]

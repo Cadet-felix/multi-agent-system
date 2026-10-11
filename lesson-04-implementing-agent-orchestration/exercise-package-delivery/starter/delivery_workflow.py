@@ -184,7 +184,9 @@ def build_address_validator() -> Agent:
     #     1. Call validate_address with the package_id
     #     2. Report: "Address <valid/invalid> for <package_id>: <reason>"
     #   Single responsibility — no extra commentary.
-    system_prompt = ""  # ← your prompt here
+    system_prompt = """You are an Address Validator Agent.
+    1. Call the validate_address tool with the package_id.
+    2. Report the result exactly like this: 'Address <valid/invalid> for <package_id>: <reason>'. Do not add any extra commentary."""
 
     @tool
     def validate_address(package_id: str) -> str:
@@ -247,7 +249,9 @@ def build_label_generator() -> Agent:
     #   The agent should:
     #     1. Call generate_label with the package_id
     #     2. Report: "Label generated for <package_id>: tracking <tracking_number>"
-    system_prompt = ""  # ← your prompt here
+    system_prompt = """You are a Label Generator Agent.
+    1. Call the generate_label tool with the package_id.
+    2. Report the result exactly like this: 'Label generated for <package_id>: tracking <tracking_number>'."""
 
     @tool
     def generate_label(package_id: str) -> str:
@@ -295,7 +299,9 @@ def build_insurance_calculator() -> Agent:
     #   The agent should:
     #     1. Call calculate_insurance with the package_id
     #     2. Report: "Insurance for <package_id>: $<premium> (<tier> coverage)"
-    system_prompt = ""  # ← your prompt here
+    system_prompt = """You are an Insurance Calculator Agent.
+    1. Call the calculate_insurance tool with the package_id.
+    2. Report the result exactly like this: 'Insurance for <package_id>: $<premium> (<tier> coverage)'."""
 
     @tool
     def calculate_insurance(package_id: str) -> str:
@@ -351,7 +357,9 @@ def build_carrier_selector() -> Agent:
     #   The agent should:
     #     1. Call select_carrier with the package_id
     #     2. Report: "Carrier for <package_id>: <carrier_name> ($<rate>, <days> days)"
-    system_prompt = ""  # ← your prompt here
+    system_prompt = """You are a Carrier Selector Agent.
+    1. Call the select_carrier tool with the package_id.
+    2. Report the result exactly like this: 'Carrier for <package_id>: <carrier_name> ($<rate>, <days> days)'."""
 
     @tool
     def select_carrier(package_id: str) -> str:
@@ -403,7 +411,9 @@ def build_domestic_shipping() -> Agent:
     #   The agent should:
     #     1. Call process_domestic with the package_id
     #     2. Report: "Domestic shipment processed for <package_id>"
-    system_prompt = ""  # ← your prompt here
+    system_prompt = """You are a Domestic Shipping Agent.
+    1. Call the process_domestic tool with the package_id.
+    2. Report the result exactly like this: 'Domestic shipment processed for <package_id>'."""
 
     @tool
     def process_domestic(package_id: str) -> str:
@@ -449,7 +459,9 @@ def build_international_shipping() -> Agent:
     #   The agent should:
     #     1. Call process_international with the package_id
     #     2. Report: "International shipment processed for <package_id>"
-    system_prompt = ""  # ← your prompt here
+    system_prompt = """You are an International Shipping Agent.
+    1. Call the process_international tool with the package_id.
+    2. Report the result exactly like this: 'International shipment processed for <package_id>'."""
 
     @tool
     def process_international(package_id: str) -> str:
@@ -554,7 +566,24 @@ def orchestrate_delivery(package_id: str) -> dict:
     #   3. Otherwise, fall through to Phase 2. Print a "valid" confirmation.
     #
     # Pattern reference: see the Module 4 demo (hr_onboarding.py).
-    raise NotImplementedError("TODO 7: implement the sequential gate")
+    prompt = f"Validate address for package {package_id}"
+    timings["validation"] = run_agent_with_retry(build_address_validator, prompt)
+
+    validation_result = workflow_state.get("validation", {})
+    if validation_result.get("status") != "valid":
+        print(f"    HALTED: Validation failed — {validation_result.get('reason')}")
+        return {
+            "phase1_gate": timings["validation"],
+            "phase2_parallel": 0.0,
+            "phase3_conditional": 0.0,
+            "total": timings["validation"],
+            "halted": True,
+            "halt_reason": validation_result.get('reason'),
+            "timings": timings,
+        }
+    else:
+        print(f"    Address valid. Proceeding to Phase 2.")
+
 
     # ══════════════════════════════════════════════════
     # PHASE 2: PARALLEL — Label, insurance, carrier
@@ -582,7 +611,27 @@ def orchestrate_delivery(package_id: str) -> dict:
     #   f"Generate shipping label for package {package_id}"
     #   f"Calculate insurance for package {package_id}"
     #   f"Select carrier for package {package_id}"
-    pass  # ← replace with your implementation
+    def run_label():
+        return run_agent_with_retry(build_label_generator, f"Generate shipping label for package {package_id}")
+
+    def run_insurance():
+        return run_agent_with_retry(build_insurance_calculator, f"Calculate insurance for package {package_id}")
+
+    def run_carrier():
+        return run_agent_with_retry(build_carrier_selector, f"Select carrier for package {package_id}")
+
+    t_parallel_start = time.time()
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(run_label): "label",
+            executor.submit(run_insurance): "insurance",
+            executor.submit(run_carrier): "carrier",
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            timings[name] = future.result()
+    phase2_time = time.time() - t_parallel_start
+
 
     print(f"    Label: {timings.get('label', 0):.1f}s | Insurance: {timings.get('insurance', 0):.1f}s | Carrier: {timings.get('carrier', 0):.1f}s")
     print(f"    Phase 2 total: {phase2_time:.1f}s (parallel)")
@@ -602,7 +651,15 @@ def orchestrate_delivery(package_id: str) -> dict:
     #     run_agent_with_retry(...). Otherwise invoke build_international_shipping.
     #   - Store the elapsed time in timings["shipping"].
     #   - Print which branch you took.
-    pass  # ← replace with your implementation
+    if pkg["sender_country"] == pkg["country"]:
+        print(f"    Routing to Domestic Shipping...")
+        prompt = f"Process domestic shipment for package {package_id}"
+        timings["shipping"] = run_agent_with_retry(build_domestic_shipping, prompt)
+    else:
+        print(f"    Routing to International Shipping...")
+        prompt = f"Process international shipment for package {package_id}"
+        timings["shipping"] = run_agent_with_retry(build_international_shipping, prompt)
+
 
     shipping = workflow_state.get("shipping", {})
     print(f"    {shipping.get('shipping_type', '?').title()} shipping processed ({timings.get('shipping', 0):.1f}s)")
