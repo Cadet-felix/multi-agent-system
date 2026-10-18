@@ -158,13 +158,19 @@ def build_analytics_agent(gateway: LambdaGateway) -> Agent:
 
     # TODO 1: Create a BedrockModel
     # Hint: Use NOVA_LITE_MODEL, AWS_REGION, and temperature=0.1
-    model = None  # Replace with BedrockModel(...)
+    model = BedrockModel(model_id=NOVA_LITE_MODEL, region_name=AWS_REGION, temperature=0.1)
 
     # TODO 2: Build system prompt listing available Gateway tools
     # Hint: Use gateway.discover_tools() to list tools dynamically
     available_tools = gateway.discover_tools()
     tool_list = "\n".join(f"  - {t['name']}: {t['description']}" for t in available_tools)
-    system_prompt = ""  # Replace with system prompt including tool_list
+    
+    system_prompt = f"""You are an intelligent analytics assistant. 
+You answer queries by routing requests to the appropriate backend services through your gateway.
+Available tools discovered via the gateway:
+{tool_list}
+
+Select the tool that semantically matches the user's intent. Do not hallucinate answers; rely on the tool output."""
 
     # TODO 3: Create @tool function for weather lookup
     # Hint: Call gateway.invoke_tool("weather_lambda", {"city": city})
@@ -176,7 +182,8 @@ def build_analytics_agent(gateway: LambdaGateway) -> Agent:
         Returns:
             JSON with weather data
         """
-        pass  # Replace with gateway.invoke_tool call
+        result = gateway.invoke_tool("weather_lambda", {"city": city})
+        return json.dumps(result)
 
     # TODO 4: Create @tool function for currency conversion
     # Hint: Call gateway.invoke_tool("currency_lambda", {"amount": ..., "from": ..., "to": ...})
@@ -190,16 +197,46 @@ def build_analytics_agent(gateway: LambdaGateway) -> Agent:
         Returns:
             JSON with conversion result
         """
-        pass  # Replace with gateway.invoke_tool call
+        result = gateway.invoke_tool("currency_lambda", {"amount": amount, "from": from_currency, "to": to_currency})
+        return json.dumps(result)
 
     # TODO 5: Create the get_news @tool function
     #   - Define a function get_news(topic: str) -> str with a docstring
     #   - Call gateway.invoke_tool("news_api", {"topic": topic})
     #   - Return formatted string with the result
     #   Hint: Follow the same pattern as get_weather and get_currency above.
+    @tool
+    def get_news(topic: str) -> str:
+        """Get the latest news headlines for a specific topic.
+        Args:
+            topic: News topic (e.g., "ai", "finance", "technology")
+        Returns:
+            JSON with news headlines
+        """
+        result = gateway.invoke_tool("news_api", {"topic": topic})
+        return json.dumps(result)
 
     # TODO 6: Return Agent with model, system_prompt, and all 3 tools
-    pass  # Replace with return Agent(...)
+    tools = [get_weather, convert_currency, get_news]
+
+    # MAGIC DYNAMIC TOOL BUILDER: 
+    # To truly fulfill the gateway pattern's superpower ("no @tool code changes needed"),
+    # we dynamically wrap any NEW tools discovered in the gateway into generic @tools so 
+    # rebuilding the agent automatically picks them up for execution.
+    registered_targets = {"weather_lambda", "currency_lambda", "news_api"}
+    for t in available_tools:
+        if t["name"] not in registered_targets:
+            def create_dynamic_tool(target_name, target_desc):
+                @tool(name=target_name)
+                def dynamic_tool(symbol: str) -> str:
+                    """Dynamically discovered tool."""
+                    return json.dumps(gateway.invoke_tool(target_name, {"symbol": symbol}))
+                dynamic_tool.__doc__ = f"{target_desc}\nArgs:\n  symbol: Required query parameter."
+                return dynamic_tool
+            tools.append(create_dynamic_tool(t["name"], t["description"]))
+
+    return Agent(model=model, system_prompt=system_prompt, tools=tools)
+
 
 TEST_QUERIES = [
     {"query": "What is the weather in Tokyo right now?",
@@ -223,19 +260,39 @@ def main():
         description="Lambda-backed tool gateway for analytics utilities"
     )
     print(f"\n  Gateway: {gateway.gateway_id}")
+    
     # NOTE: news uses "news_api" (REST API backend) while weather/currency use
     # "_lambda" suffix (Lambda backend). The gateway abstracts this — the agent
     # doesn't need to know the backend type, only the tool name.
+    
     # TODO 7: Register 3 targets on the Gateway
     # Hint: Same as demo — register_target() for each tool
     #   weather_lambda, currency_lambda, news_api
     #   Use WEATHER_FUNCTION, CURRENCY_FUNCTION, NEWS_FUNCTION
     #   Include descriptive descriptions for semantic tool selection
-    # Replace with 3 gateway.register_target() calls
+    gateway.register_target(
+        name="weather_lambda",
+        description="Look up current weather conditions for a city.",
+        function_name=WEATHER_FUNCTION,
+        target_type="lambda"
+    )
+    gateway.register_target(
+        name="currency_lambda",
+        description="Convert an amount between two currencies.",
+        function_name=CURRENCY_FUNCTION,
+        target_type="lambda"
+    )
+    gateway.register_target(
+        name="news_api",
+        description="Get the latest news headlines for a specific topic.",
+        function_name=NEWS_FUNCTION,
+        target_type="lambda"
+    )
 
     print(f"  Registered {len(gateway.targets)} targets:")
     for t in gateway.discover_tools():
         print(f"    [{t['type']:8s}] {t['name']}")
+        
     # TODO 8: Run test queries through the agent
     # Hint: Same as demo — loop through TEST_QUERIES,
     #   run_agent_with_retry(lambda: build_analytics_agent(gateway), query["query"])
@@ -245,6 +302,13 @@ def main():
         print(f"  Expected tool: {test['expected_tool']}")
         print(f"  {test['description']}")
         print(f"{'━' * 70}")
+        print("  Invoking agent...")
+        try:
+            elapsed = run_agent_with_retry(lambda: build_analytics_agent(gateway), test["query"])
+            print(f"  Completed in {elapsed:.2f}s")
+        except Exception as e:
+            print(f"  Agent error: {e}")
+
     print(f"\n{'═' * 70}")
     print("INVOCATION LOG")
     print(f"{'═' * 70}")
@@ -266,6 +330,40 @@ def main():
     #   - Run a test query: "What is the current stock price of AMZN?"
     #   Hint: This is the gateway pattern's superpower — no @tool code changes needed.
     #         The agent's system prompt includes discovered tools, so rebuilding picks up the new one.
+    
+    print(f"\n{'═' * 70}")
+    print("  EXTENSION: DYNAMIC TOOL REGISTRATION")
+    print(f"{'═' * 70}")
+
+    STOCK_PRICE_FUNCTION = os.environ.get("STOCK_PRICE_FUNCTION", "lesson-11-exercise-stock-price")
+    gateway.register_target(
+        name="stock_price",
+        description="Lookup current stock prices by symbol. Parameter 'symbol' is required.",
+        function_name=STOCK_PRICE_FUNCTION,
+        target_type="lambda"
+    )
+    print("  [+] Registered new tool: stock_price")
+
+    query_4 = "What is the current stock price of AMZN?"
+    print(f"\n{'━' * 70}")
+    print(f"  QUERY 4: \"{query_4}\"")
+    print(f"  Expected tool: stock_price")
+    print(f"  Dynamic tool discovery — routes to Stock Price Lambda")
+    print(f"{'━' * 70}")
+    
+    print("  Invoking agent...")
+    try:
+        # Rebuilding the agent dynamically picks up the 'stock_price' tool via our loop
+        elapsed = run_agent_with_retry(lambda: build_analytics_agent(gateway), query_4)
+        print(f"  Completed in {elapsed:.2f}s")
+    except Exception as e:
+        print(f"  Agent error: {e}")
+
+    print(f"\n{'═' * 70}")
+    print("FINAL INVOCATION LOG")
+    print(f"{'═' * 70}")
+    for entry in gateway.invocation_log:
+        print(f"  Tool: {entry['tool']:20s} Lambda: {entry['function']:30s} Status: {entry['result_status']}")
 
 
 if __name__ == "__main__":
